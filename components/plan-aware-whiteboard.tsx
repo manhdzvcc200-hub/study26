@@ -1,0 +1,17 @@
+'use client';
+import { useEffect, useRef, useState } from 'react';
+import { RoomEvent } from 'livekit-client';
+import { useRoomContext } from '@livekit/components-react';
+
+type Point={x:number;y:number}; type Stroke={points:Point[];color:string;width:number};
+export default function PlanAwareWhiteboard(){
+ const room=useRoomContext(); const canvasRef=useRef<HTMLCanvasElement|null>(null); const [open,setOpen]=useState(false); const [color,setColor]=useState('#111827'); const [width,setWidth]=useState(3); const [drawing,setDrawing]=useState(false); const [strokes,setStrokes]=useState<Stroke[]>([]);
+ useEffect(()=>{const fn=(payload:Uint8Array)=>{try{const d=JSON.parse(new TextDecoder().decode(payload));if(d?.type==='study26-whiteboard'&&d.stroke)setStrokes(v=>[...v,d.stroke]);if(d?.type==='study26-whiteboard-clear')setStrokes([])}catch{}};room.on(RoomEvent.DataReceived,fn);return()=>{room.off(RoomEvent.DataReceived,fn)}},[room]);
+ useEffect(()=>{const c=canvasRef.current;if(!c)return;const rect=c.getBoundingClientRect();const dpr=window.devicePixelRatio||1;c.width=Math.max(1,Math.floor(rect.width*dpr));c.height=Math.max(1,Math.floor(rect.height*dpr));const ctx=c.getContext('2d');if(!ctx)return;ctx.scale(dpr,dpr);ctx.clearRect(0,0,rect.width,rect.height);ctx.lineCap='round';ctx.lineJoin='round';for(const s of strokes){if(s.points.length<2)continue;ctx.strokeStyle=s.color;ctx.lineWidth=s.width;ctx.beginPath();ctx.moveTo(s.points[0].x,s.points[0].y);for(const p of s.points.slice(1))ctx.lineTo(p.x,p.y);ctx.stroke()}},[strokes,open]);
+ function point(e:React.PointerEvent<HTMLCanvasElement>){const r=e.currentTarget.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}}
+ function down(e:React.PointerEvent<HTMLCanvasElement>){setDrawing(true);const s={points:[point(e)],color,width};setStrokes(v=>[...v,s]);e.currentTarget.setPointerCapture(e.pointerId)}
+ function move(e:React.PointerEvent<HTMLCanvasElement>){if(!drawing)return;const p=point(e);setStrokes(v=>{const next=v.map((x,i)=>i===v.length-1?{...x,points:[...x.points,p]}:x);return next});}
+ async function up(){if(!drawing)return;setDrawing(false);const stroke=strokes[strokes.length-1];if(stroke)await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({type:'study26-whiteboard',stroke})),{reliable:true});}
+ async function clear(){setStrokes([]);await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({type:'study26-whiteboard-clear'})),{reliable:true})}
+ return <>{<button onClick={()=>setOpen(v=>!v)} className="fixed right-2 bottom-24 z-40 sm:right-5 sm:bottom-5 rounded-xl bg-white px-4 py-2 font-black shadow">🎨 Bảng trắng</button>}{open&&<div className="fixed inset-5 z-50 flex flex-col overflow-hidden rounded-3xl border bg-white shadow-2xl"><div className="flex items-center gap-3 border-b p-3"><span className="font-black">🎨 Bảng trắng</span><input type="color" value={color} onChange={e=>setColor(e.target.value)}/><input className="w-24" type="range" min={1} max={12} value={width} onChange={e=>setWidth(Number(e.target.value))}/><button onClick={clear} className="ml-auto rounded-xl bg-red-50 px-3 py-2 font-bold text-red-600">Xóa bảng</button><button onClick={()=>setOpen(false)} className="rounded-xl border px-3 py-2 font-bold">Đóng</button></div><div className="min-h-0 flex-1 bg-slate-100 p-3"><canvas ref={canvasRef} className="h-full w-full touch-none rounded-2xl bg-white" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}/></div></div>}</>
+}

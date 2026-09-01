@@ -1,0 +1,12 @@
+create extension if not exists pgcrypto;
+do $$ begin create type public.user_role as enum('student','teacher','admin'); exception when duplicate_object then null; end $$;
+create table if not exists public.profiles(id uuid primary key references auth.users(id) on delete cascade,full_name text,avatar_url text,role public.user_role not null default 'student',created_at timestamptz default now());
+create table if not exists public.classes(id uuid primary key default gen_random_uuid(),teacher_id uuid not null references public.profiles(id) on delete cascade,name text not null,description text,code text unique not null,created_at timestamptz default now());
+create table if not exists public.class_members(class_id uuid references public.classes(id) on delete cascade,student_id uuid references public.profiles(id) on delete cascade,joined_at timestamptz default now(),primary key(class_id,student_id));
+create table if not exists public.live_rooms(id uuid primary key default gen_random_uuid(),class_id uuid references public.classes(id) on delete cascade,created_by uuid references public.profiles(id) on delete cascade,title text,status text default 'live',created_at timestamptz default now());
+create or replace function public.handle_new_user() returns trigger language plpgsql security definer set search_path=public as $$ begin insert into public.profiles(id,full_name,role) values(new.id,new.raw_user_meta_data->>'full_name','student') on conflict(id) do nothing; return new; end $$;
+drop trigger if exists on_auth_user_created on auth.users; create trigger on_auth_user_created after insert on auth.users for each row execute procedure public.handle_new_user();
+alter table public.profiles enable row level security; alter table public.classes enable row level security; alter table public.class_members enable row level security; alter table public.live_rooms enable row level security;
+create policy "profile own" on public.profiles for select using(id=auth.uid());
+create policy "classes members" on public.classes for select using(teacher_id=auth.uid() or exists(select 1 from public.class_members m where m.class_id=id and m.student_id=auth.uid()));
+create policy "rooms members" on public.live_rooms for select using(exists(select 1 from public.classes c where c.id=class_id and c.teacher_id=auth.uid()) or exists(select 1 from public.class_members m where m.class_id=class_id and m.student_id=auth.uid()));
